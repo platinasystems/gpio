@@ -95,54 +95,63 @@ func pinOpen(p Pin, name string) (f *os.File, fn string, err error) {
 	return
 }
 
-// "direction" ... reads as either "in" or "out". This value may
-// 	normally be written. Writing as "out" defaults to
-// 	initializing the value as low. To ensure glitch free
-// 	operation, values "low" and "high" may be written to
-// 	configure the GPIO as an output with that initial value.
-func setGetDir(p Pin, isSet bool) (isOut bool, err error) {
-	var (
-		f  *os.File
-		fn string
-	)
-	f, fn, err = pinOpen(p, "direction")
+func (p Pin) Direction() (isOut bool, err error) {
+	f, fn, err := pinOpen(p, "direction")
 	if err != nil {
 		return
 	}
 	defer f.Close()
 
 	var v string
-	if isSet {
-		v = "in"
-		if p&IsOutputLo != 0 {
-			v = "low"
-		}
-		if p&IsOutputHi != 0 {
-			v = "high"
-		}
-		fmt.Fprintf(f, "%s\n", v)
-	} else {
-		fmt.Fscanf(f, "%s\n", &v)
-		switch v {
-		case "out":
-			isOut = true
-		case "in":
-		default:
-			err = fmt.Errorf("%s: read unexpected value `%s'", fn, v)
-			return
-		}
+
+	fmt.Fscanf(f, "%s\n", &v)
+	switch v {
+	case "out":
+		isOut = true
+	case "in":
+
+	default:
+		err = fmt.Errorf("%s: read unexpected value `%s'", fn, v)
+		return
 	}
 	return
 }
 
+// "direction" ... reads as either "in" or "out". This value may
+// 	normally be written. Writing as "out" defaults to
+// 	initializing the value as low. To ensure glitch free
+// 	operation, values "low" and "high" may be written to
+// 	configure the GPIO as an output with that initial value.
 func (p Pin) SetDirection() (err error) {
-	_, err = setGetDir(p, true)
-	return
-}
+	d, err := p.Direction()
+	if err != nil {
+		return
+	}
 
-func (p Pin) Direction() (isOut bool, err error) {
-	isOut, err = setGetDir(p, false)
-	return
+	if d {
+		if (p & (IsOutputLo | IsOutputHi)) != 0 {
+			return
+		}
+	} else {
+		if (p & (IsOutputLo | IsOutputHi)) == 0 {
+			return
+		}
+	}
+	f, _, err := pinOpen(p, "direction")
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	v := "in"
+	if p&IsOutputLo != 0 {
+		v = "low"
+	}
+	if p&IsOutputHi != 0 {
+		v = "high"
+	}
+	fmt.Fprintf(f, "%s\n", v)
+	return err
 }
 
 // "value" ... reads as either 0 (low) or 1 (high). If the GPIO
