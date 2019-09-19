@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+
+	"github.com/platinasystems/fdt"
 )
 
 type Pin struct {
@@ -28,8 +31,8 @@ type Chip struct {
 	Compatible map[string]bool
 }
 
-var Aliases GpioAliasMap
-var Pins PinMap
+var aliases GpioAliasMap
+var pins PinMap
 
 // File prefix for testing w/o proper sysfs.
 var prefix string
@@ -146,9 +149,77 @@ func NewPin(name, mode, bank, index string) (err error) {
 	i, _ := strconv.Atoi(index)
 	p := &Pin{Gpio: GpioBankToBase[bank] + i, Name: name,
 		Default: GpioPinMode[mode]}
-	Pins[name] = p
+	pins[name] = p
 	if p.IsExported() {
 		return
 	}
 	return p.Export()
+}
+
+func FindPin(name string) (p *Pin, f bool) {
+	gpioInit()
+	p, f = pins[name]
+	return
+}
+
+func NumPins() int {
+	gpioInit()
+	return len(pins)
+}
+
+func AllPins() (pm PinMap) {
+	gpioInit()
+	return pins
+}
+
+func gpioInit() {
+	if aliases != nil {
+		return
+	}
+	aliases = make(GpioAliasMap)
+	pins = make(PinMap)
+
+	t := fdt.DefaultTree()
+
+	if t != nil {
+		t.MatchNode("aliases", gatherAliases)
+		t.EachProperty("gpio-controller", "", gatherPins)
+	}
+}
+
+// Build map of gpio pins for this gpio controller
+func gatherAliases(n *fdt.Node) {
+	for p, pn := range n.Properties {
+		if strings.Contains(p, "gpio") {
+			val := strings.Split(string(pn), "\x00")
+			v := strings.Split(val[0], "/")
+			aliases[p] = v[len(v)-1]
+		}
+	}
+}
+
+// Build map of gpio pins for this gpio controller
+func gatherPins(n *fdt.Node, name string, value string) {
+	var pn []string
+
+	for na, al := range aliases {
+		if al == n.Name {
+			for _, c := range n.Children {
+				mode := ""
+				for p, _ := range c.Properties {
+					switch p {
+					case "gpio-pin-desc":
+						pn = strings.Split(c.Name, "@")
+					case "output-high", "output-low", "input":
+						mode = p
+					}
+				}
+				err := NewPin(pn[0], mode, na, pn[1])
+				if err != nil {
+					fmt.Printf("Error setting %s to %s: %s\n",
+						pn[0], mode, err)
+				}
+			}
+		}
+	}
 }
